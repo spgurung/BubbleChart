@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html>
+<head lang="en">
+    <meta charset="UTF-8">
+    <title>Trade Between Countries</title>
+    <style>
+        .link {
+            stroke: gray;
+            stroke-width: .8px;
+        }
+        .node {
+            fill: white;
+            stroke: #000;
+            stroke-width: .9px;
+        }
+        .node:hover {
+            fill: black;
+        }
+        div{
+            margin-top:10px;
+            margine-bottom:5px;
+        }
+        .axis path,
+        .axis line {
+            fill: none;
+            stroke: black;
+            shape-rendering: crispEdges;
+        }
+        path {
+            stroke: gold;
+            stroke-width: 2;
+            fill: none;
+        }
+        .axis text {
+            font-family: sans-serif;
+            font-size: 11px;
+        }
+        </style>
+</head>
+<body>
+
+<div id="explore">
+    <label>Year:</label>
+</div>
+<div id="relation">
+    <label>Show Co-relation (GDP, Life Expectancy, Total Export):</label>
+    <input type="checkbox" name="relation" value="relation" title="relation" unchecked> </input>
+</div>
+<div id="trends">
+    <label>Show Export Trend:</label>
+    <input type="checkbox" name="trend" value="trend" title="trend" unchecked> </input>
+</div>
+<div id="filter" style="display:none">
+    <label>Filter by Country:</label>
+    <select id="country_dropdown">
+    </select>
+</div>
+
+<script src="http://d3js.org/d3.v3.min.js"></script>
+<script>
+    var margin = {top: 30, bottom: 10, left: 300, right: 40};
+    var width = 900 - margin.left - margin.right;
+    var height = 1000 - margin.top - margin.bottom;
+    var svg = d3.select("body").append("svg")
+            .attr("width", width)
+            .attr("height", height);
+    var graph = {nodes: [], links: []};
+    var selectedYear, trend_line;
+    var trend_data;
+	var node, legends_g;
+    d3.json("data/countries_1995_2012.json", function(data){
+        //Calculate min and max years
+        var years = data[0]["years"]
+        var min_year = d3.min(years, function (d) {
+           return d.year;
+        })
+        var max_year = d3.max(years, function (d) {
+            return d.year;
+        })
+        selectedYear = min_year;
+
+        var total_exports = [];
+        var min_export, max_export, min_id, max_id;
+        var fill_scale = d3.scale.ordinal().domain(["Americas", "Africa","Asia", "Europe", "Oceania"]).range(["red", "green", "orange", "purple", "blue"]);
+        var node_scale, x_scale, y_scale, correlation_x, correlation_y, XScale, YScale, country_filter = 0;
+        var continent_scale = d3.scale.linear().domain([0,9]).range([50,width-50]);
+        var y_tick_scale = d3.scale.linear().domain([0,9]).range([100,length-50]);
+        var legend_data = [{"color":"red", "continent": "Americas"},{"color":"green", "continent": "Africa"}, {"color":"orange", "continent": "Asia"},
+            {"color":"purple", "continent": "Europe"}, {"color":"blue", "continent": "Oceania"}];
+        var x = d3.scale.linear().range([10, width -15]);
+        var y = d3.scale.linear().range([height/2, 100]);
+
+        var xAxis = d3.svg.axis().scale(x)
+                .orient("bottom").ticks(18);
+
+        var yAxis = d3.svg.axis().scale(y)
+                .orient("left").ticks(5);
+
+
+
+        CalculateExportData();
+
+        function CalculateExportData()
+        {
+          total_exports = [];
+            data.forEach(function(d){
+                var yr = d.years.filter(function(y){
+                    return y.year == selectedYear;
+                })
+                var partners = yr[0].top_partners;
+                var total = 0;
+                partners.forEach(function(d){
+                    total = total + d.total_export;
+                })
+                total_exports.push({"name": d.name, "total": d3.round(total), "gdp": d3.round(yr[0].gdp), "life": d3.round(yr[0].life_expectancy)});
+            })
+            console.log(total_exports);
+            min_export = d3.min(total_exports, function(d){
+                return d.total;
+            })
+            max_export = d3.max(total_exports, function(d){
+                return d.total;
+            })
+
+            var min_gdp = d3.min(total_exports, function(d){
+                return d.gdp;
+            })
+            var max_gdp = d3.max(total_exports, function(d){
+                return d.gdp;
+            })
+            var min_life = d3.min(total_exports, function(d){
+                return d.life;
+            })
+            var max_life = d3.max(total_exports, function(d){
+                return d.life;
+            })
+            // Size of the circle
+            node_scale = d3.scale.linear().domain([min_export, max_export]).range([5, 50]);
+            // X Co-ordinate for the node
+            x_scale = d3.scale.linear().domain([min_export, max_export]).range([10, width-50]);
+            // Y Co-ordinate for the node
+            y_scale = d3.scale.linear().domain([0, data.length - 1]).range([10, height - 100]);
+
+            // Correlation
+
+            correlation_x =  d3.scale.linear().domain([min_gdp, max_gdp]).range([50, width-50]);
+            console.log("Min gdp " + min_gdp);
+            console.log("Max gdp " + max_gdp);
+            correlation_y =  d3.scale.linear().domain([max_life, min_life]).range([100, height-50]);
+            console.log("Min life " + min_life);
+            console.log("Max life " + max_life);
+            // Scale for x-axis and y-axis
+            XScale = d3.scale.linear().domain([0, 50]).range([10, width-5]);
+            YScale = d3.scale.linear().domain([100, 40]).range([50, height-50]);
+        }
+
+
+        // Client Functions
+
+        d3.select("#trends").select("input").on("change", function (d){
+            if(d3.select(this).node().checked)
+            {
+                force.stop();
+                d3.select("#x1").remove();
+            	d3.select("#y1").remove();
+                d3.select('#explore').style("display", "none");
+                d3.select('#relation').style("display", "none");
+                d3.select('#filter').style("display", "block");
+                draw_trend(GetTrendData());
+            }
+            else
+            {
+                d3.select('#explore').style("display", "block");
+                d3.select('#relation').style("display", "block");
+                d3.select('#filter').style("display", "none");
+                d3.select("path").remove();
+                d3.select("#x1").remove();
+                d3.select("#y1").remove();
+				node = svg.selectAll(".node")
+				                    .data(graph.nodes)
+				                    .enter()
+				                    .append("g").attr("class", "node");
+
+				         node.append("circle")
+				                .attr("r", function(d){
+				                     var total;
+				                     total_exports.forEach(function(e){
+				                         if(e.name == d.name)
+				                            total = e.total;
+				                     })
+				                     return node_scale(total);
+				                 })
+				                 .attr("fill", function(d){
+				                     return fill_scale(d.continent);
+				                 })
+				                 .on("mouseover", function(d){
+				                    d3.select(this).append("svg:title")
+				                            .text(function(t){
+				                             var total;
+				                             total_exports.forEach(function(e){
+				                                 if(e.name == d.name)
+				                                     total = e.total;
+				                             })
+				                             return d.name + "(Total Export: " + total + ")";
+				                         })
+				                            .style("font-size", "20px")
+				                            .style("fill", "red")
+
+				                 })
+				                 .on("click", function(d){
+				                     filter_country(d.name);
+                 })
+                 draw_legends();
+                force_layout();
+            }
+        })
+
+        d3.select("#relation").select("input").on("change", function (d) {
+            if(d3.select(this).node().checked)
+            {
+                CoRelation();
+            }
+            else
+            {
+            	d3.select("#x1").remove();
+            	d3.select("#y1").remove();
+                force_layout();
+            }
+        })
+        var select = d3.select("#country_dropdown").on("change", function (d){
+            var selected = d3.select(this).node().value;
+            trend_data = GetTrendData();
+            trend_line = d3.svg.line()
+                    .x(function(d) { return x(d.year); })
+                    .y(function(d) { return y(d3.round(d.total)); });
+
+            x.domain(d3.extent(trend_data, function(d) { return d.year; }));
+            y.domain(d3.extent(trend_data, function(d) { return d.total; }));
+            d3.select("path").transition().duration(500)
+                    .attr("d", trend_line(trend_data))
+        });
+
+        select.selectAll("option")
+                .data(data)
+                .enter().append("option")
+                .attr("value", function (d) { return d.name; })
+                .property("selected", "selected")
+                .text(function (d) { return d.name; });
+
+
+        d3.select("#explore").append("label").text(min_year);
+        d3.select("#explore").
+                append("input")
+                .attr("type", "range")
+                .attr("name", "points")
+                .attr("min", min_year)
+                .attr("max", max_year)
+                .attr("step", "1")
+                .attr("value", "0");
+        d3.select("#explore").append("label").text(max_year);
+
+        d3.select("#explore").select("input").on("input", function (d) {
+            force.stop();
+            selectedYear = d3.select(this).node().value;
+            CalculateExportData();
+            var a = d3.select(".node");
+            console.log(a);
+            var b = a.selectAll("circle");
+            console.log(b);
+            d3.selectAll(".node circle").transition().duration(500)
+                    .attr("r", function(d) {
+                        var total;
+                        total_exports.forEach(function(e){
+                            if(e.name == d.name)
+                                total = e.total;
+                        })
+                        return node_scale(total);
+                    });
+
+            force_layout();
+
+        })
+
+        function GetTrendData()
+        {
+            var selectedCountry = d3.select("#country_dropdown").node().value;
+            // Prepare data
+            var country_data = [];
+            var filter_country = data.filter(function (d){
+                return d.name == selectedCountry;
+            })
+            var years_data = filter_country[0].years;
+            years_data.forEach(function(d){
+                var total = d3.sum(d.top_partners, function(s){
+                    return s.total_export;
+                })
+                country_data.push({"year": d.year, "total": d3.round(total)});
+            })
+
+
+            return country_data;
+        }
+
+        function draw_trend()
+        {
+            d3.selectAll(".node").remove();
+            var chart_height= height / 2;
+
+            trend_line = d3.svg.line()
+                    .x(function(d) { return x(d.year); })
+                    .y(function(d) { return y(d3.round(d.total)); });
+
+            x.domain(d3.extent(trend_data, function(d) { return d.year; }));
+            y.domain(d3.extent(trend_data, function(d) { return d.total; }));
+
+            svg.append("path")
+                    .attr("class", "line")
+                    .attr("d", trend_line(trend_data));
+
+            // Add the X Axis
+            svg.append("g")
+            		.attr("id", "x1")
+                    .attr("class", "x axis")
+                    .attr("transform", "translate(0," + chart_height + ")")
+                    .call(xAxis);
+
+            // Add the Y Axis
+            svg.append("g")
+            		.attr("id", "y1")
+                    .attr("class", "y axis")
+                    .attr("transform", "translate(0," +0 + ")")
+                    .call(yAxis);
+        }
+        // Create Nodes
+        graph.nodes = data;
+        // Create Links
+        graph.nodes.forEach(function(d, i) {
+             var yearly_data= d.years.filter(function(d){
+                 return d.year == selectedYear;
+             })
+            //var yearly_part
+            yearly_data[0].top_partners.forEach(function(d, j){
+                 graph.nodes.forEach(function(e, k){
+                     if(d.country_id == e.country_id)
+                         graph.links.push({"source": i, "target": k})
+                 })
+             })
+
+            console.log(graph.links);
+        })
+
+        // Generate the force layout
+        var force = d3.layout.force()
+                .size([width, height])
+                .charge(-30)
+                .linkDistance(50)
+                .gravity(0.05)
+                .on("tick", tick)
+                .on("start", function (d) {
+                })
+                .on("end", function (d) {
+                })
+
+        function tick(d) {
+            graph_update(0);
+        }
+
+
+        function CoRelation()
+        {
+            force.stop();
+            graph.nodes = data;
+            var xAxis = d3.svg.axis()
+                    .scale(XScale)
+                    .orient("bottom");
+            var yAxis = d3.svg.axis()
+                    .scale(YScale)
+                    .orient("left");
+            d3.select("svg").append("g").attr("id", "x1").attr("transform", "translate(0," + (height - 40) + ")").attr("class", "axis").call(xAxis);
+            d3.select("svg").append("g").attr("id", "y1").attr("transform", "translate(" +1 + ",0)").attr("class", "axis").call(yAxis);
+            graph.nodes.forEach(function (d){
+                var year = d.years.filter(function (y){
+                    return y.year == selectedYear;
+                })
+                var x = correlation_x(d3.round(year[0].gdp));
+                var y = correlation_y(d3.round(year[0].life_expectancy));
+                d.x = x;
+                d.y = y;
+            })
+
+            graph_update(500);
+
+        }
+
+        function update(new_data)
+        {
+            // Join node with updated data
+            var val = node.data(new_data);
+
+            val.enter().append("g").attr("class", "node");
+
+            val.append("circle")
+                    .attr("r", function(d){
+                        var total;
+                        total_exports.forEach(function(e){
+                            if(e.name == d.name)
+                                total = e.total;
+                        })
+                        return node_scale(total);
+                    })
+                    .attr("fill", function(d){
+                        return fill_scale(d.continent);
+                    })
+                    .on("mouseover", function(d){
+                        d3.select(this).append("svg:title")
+                                .text(function(t){
+                                    var total;
+                                    total_exports.forEach(function(e){
+                                        if(e.name == d.name)
+                                            total = e.total;
+                                    })
+                                    return d.name + "(Total Export: " + total + ")";
+                                })
+                                .style("font-size", "20px")
+                                .style("fill", "red")
+
+                    })
+                    .on("click", function(d){
+                        filter_country(d.name);
+                    })
+
+                val.exit().remove();
+
+        }
+
+        function CreateLinks(new_links)
+        {
+            link = svg.selectAll(".link")
+                    .data(new_links);
+
+            link.enter().append("line")
+                    .attr("class", "link")
+
+            link.attr("class", "link")
+
+            link.exit().remove();
+        }
+
+
+
+
+
+        function graph_update(duration) {
+
+            node.
+                transition().duration(duration)
+                .attr("transform", function (d) {
+                    return "translate(" + d.x + "," + d.y + ")";
+                })
+
+
+        }
+
+        function draw_legends()
+       	{
+       	 // Draw Legends
+		        legends_g = svg.selectAll("g")
+		                .data(legend_data)
+		                .enter()
+		                .append("g")
+		        legends_g.append("circle")
+		                .attr("fill", function(d){
+		                    return d.color;
+		                })
+		                .attr("cx", function (d, i){
+		                    return i * 100 + 5;
+		                })
+		                .attr("cy", function (d, i){
+		                    return margin.top;
+		                })
+		                .attr("r", function (d, i){
+		                    return 5;
+		                })
+
+		        legends_g.append("text")
+		                .attr("x", function(d, i){
+		                    return i * 100 + 15;
+		                })
+		                .attr("y", margin.top)
+		                .attr("text-anchor", "bottom")
+		                .text(function(d){
+		                    return d.continent
+                });
+        }
+
+
+        // Draw elements
+
+        draw_legends();
+        var link = svg.selectAll(".link")
+                .data(graph.links);
+
+        link.enter().append("line")
+                .attr("class", "link")
+
+        node = svg.selectAll(".node")
+                    .data(graph.nodes)
+                    .enter()
+                    .append("g").attr("class", "node");
+
+         node.append("circle")
+                .attr("r", function(d){
+                     var total;
+                     total_exports.forEach(function(e){
+                         if(e.name == d.name)
+                            total = e.total;
+                     })
+                     return node_scale(total);
+                 })
+                 .attr("fill", function(d){
+                     return fill_scale(d.continent);
+                 })
+                 .on("mouseover", function(d){
+                    d3.select(this).append("svg:title")
+                            .text(function(t){
+                             var total;
+                             total_exports.forEach(function(e){
+                                 if(e.name == d.name)
+                                     total = e.total;
+                             })
+                             return d.name + "(Total Export: " + total + ")";
+                         })
+                            .style("font-size", "20px")
+                            .style("fill", "red")
+
+                 })
+                 .on("click", function(d){
+                     filter_country(d.name);
+                 })
+
+        function filter_country(country) {
+            graph.nodes = data;
+
+            if (country_filter == 0) {
+                country_filter = 1;
+                var country_data = data.filter(function (d) {
+                    return d.name == country;
+                })
+                console.log(country_data);
+                // Selected year's data for the selected country
+                var year_data = country_data[0].years.filter(function (d) {
+                    return d.year == selectedYear;
+                })
+                console.log(year_data);
+                graph.nodes = graph.nodes.forEach(function (d) {
+                    var is_partner = false;
+                    if (d.country_id == country_data[0].country_id) {
+                        d.is_partner = true;
+                    }
+                    else {
+                        year_data[0].top_partners.forEach(function (y) {
+                            if (y.country_id == d.country_id) {
+                                is_partner = true;
+                            }
+                        })
+                        if (is_partner)
+                            d.is_partner = 1
+                        else
+                            d.is_partner = 0
+                    }
+                })
+
+               node.selectAll("circle").transition().duration(500)
+                 .style("fill", function(d) {
+                 if(!d.is_partner)
+                    return "grey";
+                 });
+            }
+            else {
+                country_filter = 0;
+
+                node.selectAll("circle").transition().duration(500)
+                        .style("fill", function(d) {
+                            return fill_scale(d.continent);
+                        });
+            }
+
+    }
+
+        //Force Layout
+        function force_layout()
+        {
+            console.log(graph.nodes);
+            console.log(graph.links);
+            if(country_filter == 1)
+            {
+                force.nodes(graph.nodes)
+                        .links([])
+                        .start()
+            }
+            else
+            {
+                force.nodes(graph.nodes)
+                        .links([])
+                        .start()
+            }
+
+        }
+
+        // Call force
+        force_layout();
+        trend_data = GetTrendData();
+    })
+
+
+</script>
+
+
+
+</body>
+</html>
+
